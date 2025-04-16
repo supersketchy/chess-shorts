@@ -163,9 +163,22 @@ def create_base_video(
 
 
 def overlay_gif_on_video(
-    base_video_path: Path, gif_path: Path, audio_dir_path: Path, output_path: Path
-):
-    """Stacks a reaction GIF and adds looping audio to fit 1080x1920."""
+    base_video_path: Path,
+    gif_path: Path,
+    audio_dir_path: Path,
+    output_path: Path,
+) -> None:
+    """Stack a reaction GIF on the chess video and add looping audio.
+
+    Args:
+        base_video_path: Path to the base MP4 without overlays.
+        gif_path: Path to the reaction GIF to overlay.
+        audio_dir_path: Directory containing reaction audio clips.
+        output_path: Path where the final MP4 will be saved.
+
+    Returns:
+        None
+    """
     target_width = 1080
     target_height = 1920
 
@@ -237,10 +250,14 @@ def overlay_gif_on_video(
 
 
 def process_puzzle(csv_path: str, index: int) -> Tuple[str, List[str], str]:
-    """Reads puzzles and extracts data for a specific index.
+    """Extract FEN, move list, and ID for a puzzle at the given index.
+
+    Args:
+        csv_path: Path to the CSV file containing puzzles.
+        index: Zero-based index of the puzzle to process.
 
     Returns:
-        A tuple containing the FEN string, a list of UCI moves, and the PuzzleId.
+        A tuple of (FEN string, list of UCI moves, PuzzleId).
     """
     df = read_puzzles(csv_path)
     puzzle: pd.Series = df.iloc[index]
@@ -252,15 +269,15 @@ def process_puzzle(csv_path: str, index: int) -> Tuple[str, List[str], str]:
 
 
 def generate_timestamped_output_path(base_dir: Path, prefix: str, suffix: str) -> Path:
-    """Generates a timestamped file path within a base directory.
+    """Create a timestamped filename within a directory.
 
     Args:
-        base_dir: The base directory for the output file.
-        prefix: The prefix for the filename.
-        suffix: The suffix (extension) for the filename.
+        base_dir: Directory in which to place the file.
+        prefix: Filename prefix (e.g., 'puzzle').
+        suffix: File extension including leading dot (e.g., '.mp4').
 
     Returns:
-        A Path object representing the full timestamped output path.
+        A Path object for 'prefix_YYYYMMDD_HHMMSSsuffix'.
     """
     timestamp: str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path: Path = base_dir / f"{prefix}_{timestamp}{suffix}"
@@ -276,7 +293,20 @@ def generate_single_video(
     audio_dir_path: Path,
     video_fps: int,
 ) -> Optional[Path]:
-    """Generates a single video for a given puzzle index."""
+    """Generate one puzzle video end-to-end.
+
+    Args:
+        puzzle_index_to_process: Index of the puzzle to render.
+        csv_path: Path to the puzzle CSV file.
+        base_temp_dir_name: Base name for the temporary PNG/video folder.
+        output_dir_path: Directory for final videos.
+        gif_dir_path: Directory of reaction GIFs.
+        audio_dir_path: Directory of reaction audio clips.
+        video_fps: Frames per second for the puzzle video.
+
+    Returns:
+        Path to the final MP4 if successful, otherwise None.
+    """
     print(f"Starting processing for puzzle index: {puzzle_index_to_process}")
 
     temp_dir_path = Path(f"{base_temp_dir_name}_{puzzle_index_to_process}")
@@ -300,10 +330,8 @@ def generate_single_video(
     return final_output_video_path
 
 
-def main():
-    """
-    Main function to generate multiple chess puzzle videos in parallel.
-    """
+def main() -> None:
+    """Main entry point: generate multiple puzzle videos in parallel."""
     (
         csv_path,
         temp_png_dir_name,
