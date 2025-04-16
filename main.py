@@ -4,23 +4,32 @@ from dotenv import load_dotenv
 import chess
 import chess.svg
 import cairosvg
-from moviepy import ImageSequenceClip, VideoFileClip, CompositeVideoClip
+from moviepy import (
+    ImageSequenceClip,
+    VideoFileClip,
+    CompositeVideoClip,
+    AudioFileClip,
+    concatenate_audioclips,
+)
 from moviepy.video.fx.Loop import Loop
 import shutil
 import datetime
 from pathlib import Path
 from typing import Iterator, Tuple, List, Optional
 import random
+import concurrent.futures
+
 
 load_dotenv()
 
 
-def load_env_vars() -> tuple[str, str, str, int, str]:
+def load_env_vars() -> tuple[str, str, str, int, str, str]:
     """Loads required environment variables.
 
     Returns:
         A tuple containing the CSV file path, temporary PNG directory name,
-        output directory name, video FPS, and reaction GIF directory name.
+        output directory name, video FPS, reaction GIF directory name,
+        and reaction audio directory name.
     """
     csv_path: Optional[str] = os.getenv("CSV_FILE_PATH")
     temp_png_dir: str = os.getenv("TEMP_PNG_DIR_NAME", "temp_pngs")
@@ -28,7 +37,15 @@ def load_env_vars() -> tuple[str, str, str, int, str]:
     video_fps_str: str = os.getenv("VIDEO_FPS", "1")
     video_fps: int = int(video_fps_str)
     reaction_gif_dir: str = os.getenv("REACTION_GIF_DIR", "reaction_gifs")
-    return csv_path, temp_png_dir, output_dir, video_fps, reaction_gif_dir
+    reaction_audio_dir: str = os.getenv("REACTION_AUDIO_DIR", "reaction_audios")
+    return (
+        csv_path,
+        temp_png_dir,
+        output_dir,
+        video_fps,
+        reaction_gif_dir,
+        reaction_audio_dir,
+    )
 
 
 def read_puzzles(file_path: str) -> pd.DataFrame:
@@ -129,44 +146,53 @@ def get_random_gif_path(gif_dir: Path) -> Path:
 
 
 def create_base_video(
-    fen: str, uci_moves: List[str], temp_dir: Path, output_dir: Path, fps: int
+    fen: str,
+    uci_moves: List[str],
+    temp_dir: Path,
+    fps: int,
 ) -> Path:
-    """Generates PNGs and creates the base video."""
+    """Generates PNGs and creates the base video inside the temp directory."""
     png_files = generate_png_sequence(fen, uci_moves, temp_dir)
-    base_video_path = generate_timestamped_output_path(
-        output_dir, "temp_base_video", ".mp4"
-    )
+    timestamp: str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    base_video_path = temp_dir / f"temp_base_video_{timestamp}.mp4"
+
     clip: ImageSequenceClip = ImageSequenceClip(png_files, fps=fps)
     clip.write_videofile(str(base_video_path), codec="libx264", logger=None)
     clip.close()
     return base_video_path
 
 
-def overlay_gif_on_video(base_video_path: Path, gif_path: Path, output_path: Path):
-    """Stacks a reaction GIF on top of the base chess video to fit 1080x1920."""
+def overlay_gif_on_video(
+    base_video_path: Path, gif_path: Path, audio_dir_path: Path, output_path: Path
+):
+    """Stacks a reaction GIF and adds looping audio to fit 1080x1920."""
     target_width = 1080
     target_height = 1920
 
     main_clip = VideoFileClip(str(base_video_path))
     gif_clip_orig = VideoFileClip(str(gif_path))
-
     main_resized = main_clip.resized(width=target_width)
     w_main_resized, h_main_resized = main_resized.size
     h_gif_area = target_height - h_main_resized
     if h_gif_area <= 0:
-        print("Warning: Not enough height for GIF. Outputting only main video.")
+        print(
+            "Warning: Not enough height for GIF. Outputting only main video without audio."
+        )
         main_resized.write_videofile(str(output_path), codec="libx264", logger=None)
         main_clip.close()
         gif_clip_orig.close()
         main_resized.close()
         return
+
     gif_resized = gif_clip_orig.resized(width=target_width)
     w_gif_resized, h_gif_resized = gif_resized.size
     if h_gif_resized > h_gif_area:
         gif_resized = gif_clip_orig.resized(height=h_gif_area)
         w_gif_resized, h_gif_resized = gif_resized.size
+
     looper = Loop(duration=main_resized.duration)
     gif_looped = looper.apply(gif_resized)
+
     gif_pos_x = (target_width - w_gif_resized) / 2
     gif_pos_y = (h_gif_area - h_gif_resized) / 2
     main_pos_x = (target_width - w_main_resized) / 2
@@ -174,27 +200,55 @@ def overlay_gif_on_video(base_video_path: Path, gif_path: Path, output_path: Pat
 
     gif_positioned = gif_looped.with_position((gif_pos_x, gif_pos_y))
     main_positioned = main_resized.with_position((main_pos_x, main_pos_y))
-    final_clip = CompositeVideoClip(
+
+    video_only_clip = CompositeVideoClip(
         [main_positioned, gif_positioned], size=(target_width, target_height)
     )
+    video_duration = video_only_clip.duration
+    audio_files = list(audio_dir_path.glob("*.mp3"))
+    final_audio = None
+    audio_segments = []
+    full_audio = None
+    total_audio_duration = 0
+    while total_audio_duration < video_duration:
+        random_audio_path = random.choice(audio_files)
+        audio_clip = AudioFileClip(str(random_audio_path))
+        audio_segments.append(audio_clip)
+        total_audio_duration += audio_clip.duration
+        full_audio = concatenate_audioclips(audio_segments)
+        final_audio = full_audio.subclipped(0, video_duration)
+        final_clip_with_audio = video_only_clip.with_audio(final_audio)
 
-    final_clip.write_videofile(str(output_path), codec="libx264", logger=None)
-
+    final_clip_with_audio.write_videofile(
+        str(output_path), codec="libx264", audio_codec="aac", logger=None
+    )
     gif_clip_orig.close()
     main_clip.close()
     gif_resized.close()
     main_resized.close()
-    final_clip.close()
+    video_only_clip.close()
+    for seg in audio_segments:
+        seg.close()
+    if final_audio:
+        final_audio.close()
+    if full_audio:
+        full_audio.close()
+    final_clip_with_audio.close()
 
 
-def process_puzzle(csv_path: str, index: int) -> Tuple[str, List[str]]:
-    """Reads puzzles and extracts data for a specific index."""
+def process_puzzle(csv_path: str, index: int) -> Tuple[str, List[str], str]:
+    """Reads puzzles and extracts data for a specific index.
+
+    Returns:
+        A tuple containing the FEN string, a list of UCI moves, and the PuzzleId.
+    """
     df = read_puzzles(csv_path)
     puzzle: pd.Series = df.iloc[index]
     fen: str = puzzle["FEN"]
     moves_str: str = puzzle["Moves"]
     uci_moves: List[str] = moves_str.split(" ")
-    return fen, uci_moves
+    puzzle_id: str = puzzle["PuzzleId"]
+    return fen, uci_moves, puzzle_id
 
 
 def generate_timestamped_output_path(base_dir: Path, prefix: str, suffix: str) -> Path:
@@ -213,38 +267,85 @@ def generate_timestamped_output_path(base_dir: Path, prefix: str, suffix: str) -
     return output_path
 
 
+def generate_single_video(
+    puzzle_index_to_process: int,
+    csv_path: str,
+    base_temp_dir_name: str,
+    output_dir_path: Path,
+    gif_dir_path: Path,
+    audio_dir_path: Path,
+    video_fps: int,
+) -> Optional[Path]:
+    """Generates a single video for a given puzzle index."""
+    print(f"Starting processing for puzzle index: {puzzle_index_to_process}")
+
+    temp_dir_path = Path(f"{base_temp_dir_name}_{puzzle_index_to_process}")
+    prepare_directory(temp_dir_path)
+    base_video_path = None
+
+    fen, uci_moves, puzzle_id = process_puzzle(csv_path, puzzle_index_to_process)
+
+    base_video_path = create_base_video(fen, uci_moves, temp_dir_path, video_fps)
+
+    random_gif_path = get_random_gif_path(gif_dir_path)
+    final_output_video_path: Path = output_dir_path / f"{puzzle_index_to_process}.mp4"
+
+    overlay_gif_on_video(
+        base_video_path, random_gif_path, audio_dir_path, final_output_video_path
+    )
+
+    print(
+        f"Finished processing puzzle index: {puzzle_index_to_process}, saved to {final_output_video_path}"
+    )
+    return final_output_video_path
+
+
 def main():
     """
-    Main function to generate a chess puzzle video with a reaction GIF overlay.
+    Main function to generate multiple chess puzzle videos in parallel.
     """
-    csv_path, temp_png_dir_name, output_dir_name, video_fps, reaction_gif_dir_name = (
-        load_env_vars()
-    )
+    (
+        csv_path,
+        temp_png_dir_name,
+        output_dir_name,
+        video_fps,
+        reaction_gif_dir_name,
+        reaction_audio_dir_name,
+    ) = load_env_vars()
 
-    temp_dir_path = Path(temp_png_dir_name)
     output_dir_path = Path(output_dir_name)
     gif_dir_path = Path(reaction_gif_dir_name)
+    audio_dir_path = Path(reaction_audio_dir_name)
 
-    prepare_directory(temp_dir_path)
     output_dir_path.mkdir(parents=True, exist_ok=True)
+    audio_dir_path.mkdir(parents=True, exist_ok=True)
 
-    puzzle_index_to_process = 0
-    fen, uci_moves = process_puzzle(csv_path, puzzle_index_to_process)
+    num_videos_to_generate = 10
+    print(f"Starting parallel generation of {num_videos_to_generate} videos...")
 
-    base_video_path = create_base_video(
-        fen, uci_moves, temp_dir_path, output_dir_path, video_fps
+    with concurrent.futures.ProcessPoolExecutor(max_workers=None) as executor:
+        futures = [
+            executor.submit(
+                generate_single_video,
+                index,
+                csv_path,
+                temp_png_dir_name,
+                output_dir_path,
+                gif_dir_path,
+                audio_dir_path,
+                video_fps,
+            )
+            for index in range(num_videos_to_generate)
+        ]
+        results = []
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            if result:
+                results.append(result)
+
+    print(
+        f"\nFinished parallel generation. {len(results)} videos successfully generated."
     )
-    random_gif_path = get_random_gif_path(gif_dir_path)
-    final_output_video_path = generate_timestamped_output_path(
-        output_dir_path, "youtube_short", ".mp4"
-    )
-
-    overlay_gif_on_video(base_video_path, random_gif_path, final_output_video_path)
-
-    os.remove(base_video_path)
-    shutil.rmtree(temp_dir_path)
-
-    print(f"Generated video with GIF overlay and saved to {final_output_video_path}")
 
 
 if __name__ == "__main__":
