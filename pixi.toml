@@ -1,0 +1,19 @@
+[project]
+channels = ["conda-forge"]
+description = "Add a short description here"
+name = "chess-shorts"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+python = ">=3.13.3,<3.14"
+python-dotenv = ">=1.1.0,<2"
+pandas = ">=2.2.3,<3"
+chess = ">=1.11.2,<2"
+ffmpeg = ">=7.1.1,<8"
+
+[pypi-dependencies]
+moviepy = ">=2.1.2, <3"
+cairosvg = ">=2.7.1, <3"
