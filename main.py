@@ -6,61 +6,97 @@ import chess.svg
 import cairosvg
 from moviepy import ImageSequenceClip
 import shutil
+import datetime
+from pathlib import Path
 
-load_dotenv()
+TEMP_PNG_DIR_NAME = "temp_pngs"
+OUTPUT_DIR_NAME = "outputs"
+VIDEO_FPS = 1
 
-csv_file_path = os.getenv("CSV_FILE_PATH")
-temp_png_dir = "temp_pngs"
-output_video_path = "puzzle_solution.mp4"
+def load_csv_path() -> str:
+    load_dotenv()
+    csv_path = os.getenv("CSV_FILE_PATH")
+    if not csv_path:
+        raise ValueError("CSV_FILE_PATH environment variable not set.")
+    return csv_path
 
-column_names = [
-    "PuzzleId",
-    "FEN",
-    "Moves",
-    "Rating",
-    "RatingDeviation",
-    "Popularity",
-    "NbPlays",
-    "Themes",
-    "GameUrl",
-    "OpeningTags",
-]
+def read_puzzles(file_path: str) -> pd.DataFrame:
+    column_names = [
+        "PuzzleId", "FEN", "Moves", "Rating", "RatingDeviation",
+        "Popularity", "NbPlays", "Themes", "GameUrl", "OpeningTags",
+    ]
+    return pd.read_csv(file_path, names=column_names, header=0)
 
-df = pd.read_csv(csv_file_path, names=column_names, header=0)
-first_puzzle = df.iloc[0]
-fen = first_puzzle["FEN"]
-moves_str = first_puzzle["Moves"]
-uci_moves = moves_str.split(' ')
+def get_puzzle_data(df: pd.DataFrame, index: int) -> tuple[str, list[str]]:
+    puzzle = df.iloc[index]
+    fen = puzzle["FEN"]
+    moves_str = puzzle["Moves"]
+    uci_moves = moves_str.split(' ')
+    return fen, uci_moves
 
-board = chess.Board(fen)
-png_files = []
+def prepare_directory(dir_path: Path) -> Path:
+    if dir_path.exists():
+        shutil.rmtree(dir_path)
+    dir_path.mkdir(parents=True, exist_ok=True)
+    return dir_path
 
-if os.path.exists(temp_png_dir):
-    shutil.rmtree(temp_png_dir)
-os.makedirs(temp_png_dir)
+def generate_board_states(fen: str, uci_moves: list[str]):
+    board = chess.Board(fen)
+    yield board.copy(), None
+    for uci_move in uci_moves:
+        move = chess.Move.from_uci(uci_move)
+        if move in board.legal_moves:
+            board.push(move)
+            yield board.copy(), move
 
-# Initial board state
-frame_num = 0
-svg_initial = chess.svg.board(board=board)
-png_path = os.path.join(temp_png_dir, f"frame_{frame_num:03d}.png")
-cairosvg.svg2png(bytestring=svg_initial.encode('utf-8'), write_to=png_path)
-png_files.append(png_path)
+def save_board_as_png(board: chess.Board, last_move: chess.Move | None, file_path: Path):
+    svg_data = chess.svg.board(board=board, lastmove=last_move)
+    cairosvg.svg2png(bytestring=svg_data.encode('utf-8'), write_to=str(file_path))
 
-# Apply moves and generate frames
-for uci_move in uci_moves:
-    frame_num += 1
-    move = chess.Move.from_uci(uci_move)
-    board.push(move)
-    boardsvg = chess.svg.board(board=board, lastmove=move)
-    png_path = os.path.join(temp_png_dir, f"frame_{frame_num:03d}.png")
-    cairosvg.svg2png(bytestring=boardsvg.encode('utf-8'), write_to=png_path)
-    png_files.append(png_path)
+def generate_png_sequence(fen: str, uci_moves: list[str], temp_dir: Path) -> list[str]:
+    board_states = generate_board_states(fen, uci_moves)
+    png_files = []
+    for frame_num, (board, move) in enumerate(board_states):
+        png_path = temp_dir / f"frame_{frame_num:03d}.png"
+        save_board_as_png(board, move, png_path)
+        png_files.append(str(png_path))
+    return png_files
 
-# Create video from PNG frames
-clip = ImageSequenceClip(png_files, fps=1) # 1 frame per second, will change later
-clip.write_videofile(output_video_path, codec='libx264')
+def create_video(image_paths: list[str], output_path: Path, fps: int):
+    if not image_paths:
+        return
+    clip = ImageSequenceClip(image_paths, fps=fps)
+    clip.write_videofile(str(output_path), codec='libx264', logger=None)
+    clip.close()
 
-# Clean up temporary files
-shutil.rmtree(temp_png_dir)
+def cleanup(dir_path: Path):
+    if dir_path.exists():
+        shutil.rmtree(dir_path)
 
-print(f"Generated video for the first puzzle solution and saved to {output_video_path}")
+def generate_timestamped_output_path(base_dir: Path, prefix: str, suffix: str) -> Path:
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return base_dir / f"{prefix}_{timestamp}{suffix}"
+
+def main():
+    temp_dir_path = Path(TEMP_PNG_DIR_NAME)
+    output_dir_path = Path(OUTPUT_DIR_NAME)
+    puzzle_index_to_process = 0
+
+    csv_path = load_csv_path()
+    df = read_puzzles(csv_path)
+    fen, uci_moves = get_puzzle_data(df, puzzle_index_to_process)
+
+    prepare_directory(temp_dir_path)
+    png_files = generate_png_sequence(fen, uci_moves, temp_dir_path)
+
+    if png_files:
+        output_video_path = generate_timestamped_output_path(
+            output_dir_path, "youtube_short", ".mp4"
+        )
+        create_video(png_files, output_video_path, VIDEO_FPS)
+        print(f"Generated video and saved to {output_video_path}")
+
+    cleanup(temp_dir_path)
+
+if __name__ == "__main__":
+    main()
