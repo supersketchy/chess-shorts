@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Iterator, Tuple, List, Optional
 import random
 import concurrent.futures
+from tqdm import tqdm
 
 
 load_dotenv()
@@ -323,6 +324,7 @@ def generate_single_video(
     overlay_gif_on_video(
         base_video_path, random_gif_path, audio_dir_path, final_output_video_path
     )
+    shutil.rmtree(temp_dir_path, ignore_errors=True)
 
     print(
         f"Finished processing puzzle index: {puzzle_index_to_process}, saved to {final_output_video_path}"
@@ -351,11 +353,11 @@ def main() -> None:
     num_videos_to_generate = 100
     print(f"Starting parallel generation of {num_videos_to_generate} videos...")
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=None) as executor:
+    with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = [
             executor.submit(
                 generate_single_video,
-                index,
+                idx,
                 csv_path,
                 temp_png_dir_name,
                 output_dir_path,
@@ -363,13 +365,21 @@ def main() -> None:
                 audio_dir_path,
                 video_fps,
             )
-            for index in range(num_videos_to_generate)
+            for idx in range(num_videos_to_generate)
         ]
-        results = []
-        for future in concurrent.futures.as_completed(futures):
-            result = future.result()
-            if result:
-                results.append(result)
+        results: List[Path] = []
+        for task in tqdm(
+            concurrent.futures.as_completed(futures),
+            total=len(futures),
+            desc="Generating videos",
+        ):
+            try:
+                outcome = task.result()
+            except Exception as exc:
+                print(f"Error generating video: {exc}")
+            else:
+                if outcome:
+                    results.append(outcome)
 
     print(
         f"\nFinished parallel generation. {len(results)} videos successfully generated."
