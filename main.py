@@ -320,7 +320,7 @@ def main():
     output_dir_path.mkdir(parents=True, exist_ok=True)
     audio_dir_path.mkdir(parents=True, exist_ok=True)
 
-    num_videos_to_generate = 10
+    num_videos_to_generate = 100
     print(f"Starting parallel generation of {num_videos_to_generate} videos...")
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=None) as executor:
