@@ -1,3 +1,5 @@
+puzzle_*.mp4
+temp_pngs*
 outputs
 .env
 # pixi environments
