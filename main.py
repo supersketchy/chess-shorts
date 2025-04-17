@@ -9,8 +9,8 @@ from moviepy import (
     VideoFileClip,
     CompositeVideoClip,
     AudioFileClip,
-    concatenate_audioclips,
 )
+from moviepy.audio.AudioClip import concatenate_audioclips
 from moviepy.video.fx.Loop import Loop
 import shutil
 import datetime
@@ -19,18 +19,21 @@ from typing import Iterator, Tuple, List, Optional
 import random
 import concurrent.futures
 from tqdm import tqdm
+import google.genai as genai
+from google.cloud import texttospeech
+import re
 
 
 load_dotenv()
 
 
-def load_env_vars() -> tuple[str, str, str, int, str, str]:
+def load_env_vars() -> tuple[str, str, str, int, str, str, str]:
     """Loads required environment variables.
 
     Returns:
         A tuple containing the CSV file path, temporary PNG directory name,
         output directory name, video FPS, reaction GIF directory name,
-        and reaction audio directory name.
+        Gemini API key, and reaction audio directory name.
     """
     csv_path: Optional[str] = os.getenv("CSV_FILE_PATH")
     temp_png_dir: str = os.getenv("TEMP_PNG_DIR_NAME", "temp_pngs")
@@ -38,13 +41,15 @@ def load_env_vars() -> tuple[str, str, str, int, str, str]:
     video_fps_str: str = os.getenv("VIDEO_FPS", "1")
     video_fps: int = int(video_fps_str)
     reaction_gif_dir: str = os.getenv("REACTION_GIF_DIR", "reaction_gifs")
-    reaction_audio_dir: str = os.getenv("REACTION_AUDIO_DIR", "reaction_audios")
+    gemini_api_key: Optional[str] = os.getenv("GEMINI_API_KEY")
+    reaction_audio_dir: str = os.getenv("REACTION_AUDIO_DIR", "reaction_audio")
     return (
         csv_path,
         temp_png_dir,
         output_dir,
         video_fps,
         reaction_gif_dir,
+        gemini_api_key,
         reaction_audio_dir,
     )
 
@@ -143,7 +148,109 @@ def get_random_gif_path(gif_dir: Path) -> Path:
         Raises IndexError if no GIF files are found.
     """
     gif_files: List[Path] = list(gif_dir.glob("*.gif"))
+    if not gif_files:
+        raise IndexError(f"No GIF files found in directory: {gif_dir}")
     return random.choice(gif_files)
+
+
+def get_random_reaction_audio_path(audio_dir: Path) -> Optional[Path]:
+    """Gets the path to a randomly selected audio file (e.g., MP3, WAV) from a directory.
+
+    Args:
+        audio_dir: The directory containing the audio files.
+
+    Returns:
+        A Path object to a random audio file, or None if no files are found
+        or the directory doesn't exist.
+    """
+    audio_files: List[Path] = (
+        list(audio_dir.glob("*.mp3"))
+        + list(audio_dir.glob("*.wav"))
+        + list(audio_dir.glob("*.ogg"))
+    )
+    return random.choice(audio_files)
+
+
+def synthesize_text_to_speech(
+    client: texttospeech.TextToSpeechClient, text: str, output_path: Path
+) -> None:
+    """Synthesizes speech from text and saves it as an MP3 file.
+
+    Args:
+        client: The initialized TextToSpeechClient.
+        text: The text to synthesize.
+        output_path: The path to save the output MP3 file.
+    """
+    synthesis_input = texttospeech.SynthesisInput(text=text)
+    voice = texttospeech.VoiceSelectionParams(
+        language_code="en-US", ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL
+    )
+    audio_config = texttospeech.AudioConfig(
+        audio_encoding=texttospeech.AudioEncoding.MP3
+    )
+    response = client.synthesize_speech(
+        input=synthesis_input, voice=voice, audio_config=audio_config
+    )
+    with open(output_path, "wb") as out:
+        out.write(response.audio_content)
+
+
+def generate_interleaved_audio(
+    text: str,
+    tts_client: texttospeech.TextToSpeechClient,
+    reaction_audio_dir: Path,
+    temp_dir: Path,
+    prefix: str = "chunk",
+) -> List[Path]:
+    """Generates TTS audio chunks from text and interleaves them with random reaction sounds
+       based on [REACTION] placeholders.
+
+    Args:
+        text: The input caption text containing [REACTION] placeholders.
+        tts_client: Initialized Google TextToSpeechClient.
+        reaction_audio_dir: Path to the directory with reaction audio files.
+        temp_dir: Temporary directory to store generated audio chunks.
+        prefix: Prefix for temporary audio chunk filenames.
+
+    Returns:
+        A list of Path objects for the audio files in the order they should be played
+        (caption chunk, reaction sound, caption chunk, ...).
+    """
+    text_segments = [
+        segment.strip()
+        for segment in re.split(r"\[REACTION\]", text)
+        if segment.strip()
+    ]
+    interleaved_paths: List[Path] = []
+    chunk_num = 0
+
+    for i, segment in enumerate(text_segments):
+        chunk_path = temp_dir / f"{prefix}_{chunk_num}.mp3"
+        print(f"Synthesizing TTS for segment {chunk_num}: '{segment[:50]}...'")
+        synthesize_text_to_speech(tts_client, segment, chunk_path)
+        interleaved_paths.append(chunk_path)
+        chunk_num += 1
+
+        if i < len(text_segments) - 1:
+            reaction_path = get_random_reaction_audio_path(reaction_audio_dir)
+            if reaction_path:
+                print(f"Adding reaction audio: {reaction_path.name}")
+                interleaved_paths.append(reaction_path)
+            else:
+                print("Warning: Could not find reaction audio to insert.")
+
+    if not interleaved_paths and text.strip() and "[REACTION]" not in text:
+        print("No [REACTION] found, synthesizing full text as one chunk.")
+        chunk_path = temp_dir / f"{prefix}_full.mp4"
+        synthesize_text_to_speech(tts_client, text.strip(), chunk_path)
+        interleaved_paths.append(chunk_path)
+    elif not interleaved_paths and text.strip():
+        print("Warning: Text contained only [REACTION] or whitespace.")
+
+    print(
+        f"Generated {len(interleaved_paths)} audio segments (TTS chunks + reactions)."
+    )
+    return interleaved_paths
 
 
 def create_base_video(
@@ -166,15 +273,15 @@ def create_base_video(
 def overlay_gif_on_video(
     base_video_path: Path,
     gif_path: Path,
-    audio_dir_path: Path,
+    audio_paths: List[Path],
     output_path: Path,
 ) -> None:
-    """Stack a reaction GIF on the chess video and add looping audio.
+    """Stack a reaction GIF on the chess video and add concatenated audio.
 
     Args:
         base_video_path: Path to the base MP4 without overlays.
         gif_path: Path to the reaction GIF to overlay.
-        audio_dir_path: Directory containing reaction audio clips.
+        audio_paths: List of paths to audio files (TTS chunks, reactions) to concatenate.
         output_path: Path where the final MP4 will be saved.
 
     Returns:
@@ -182,6 +289,19 @@ def overlay_gif_on_video(
     """
     target_width = 1080
     target_height = 1920
+
+    main_clip = None
+    gif_clip_orig = None
+    main_resized = None
+    gif_resized = None
+    gif_looped = None
+    gif_positioned = None
+    main_positioned = None
+    video_only_clip = None
+    audio_clips = []
+    concatenated_audio = None
+    final_audio = None
+    final_clip_with_audio = None
 
     main_clip = VideoFileClip(str(base_video_path))
     gif_clip_orig = VideoFileClip(str(gif_path))
@@ -193,9 +313,6 @@ def overlay_gif_on_video(
             "Warning: Not enough height for GIF. Outputting only main video without audio."
         )
         main_resized.write_videofile(str(output_path), codec="libx264", logger=None)
-        main_clip.close()
-        gif_clip_orig.close()
-        main_resized.close()
         return
 
     gif_resized = gif_clip_orig.resized(width=target_width)
@@ -219,46 +336,39 @@ def overlay_gif_on_video(
         [main_positioned, gif_positioned], size=(target_width, target_height)
     )
     video_duration = video_only_clip.duration
-    audio_files = list(audio_dir_path.glob("*.mp3"))
-    final_audio = None
-    audio_segments = []
-    full_audio = None
-    total_audio_duration = 0
-    while total_audio_duration < video_duration:
-        random_audio_path = random.choice(audio_files)
-        audio_clip = AudioFileClip(str(random_audio_path))
-        audio_segments.append(audio_clip)
-        total_audio_duration += audio_clip.duration
-        full_audio = concatenate_audioclips(audio_segments)
-        final_audio = full_audio.subclipped(0, video_duration)
+
+    if audio_paths:
+        print(f"Loading {len(audio_paths)} audio segments...")
+        audio_clips = [AudioFileClip(str(p)) for p in audio_paths]
+        print("Concatenating audio...")
+        concatenated_audio = concatenate_audioclips(audio_clips)
+        print("Setting final audio duration...")
+        final_audio = concatenated_audio.with_duration(video_duration)
+        print("Compositing audio onto video...")
         final_clip_with_audio = video_only_clip.with_audio(final_audio)
+    else:
+        print("Warning: No audio paths provided. Creating video without audio.")
+        final_clip_with_audio = video_only_clip
 
+    print("Writing final video file...")
     final_clip_with_audio.write_videofile(
-        str(output_path), codec="libx264", audio_codec="aac", logger=None
+        str(output_path),
+        codec="libx264",
+        audio_codec="aac" if final_audio else None,
+        logger=None,
     )
-    gif_clip_orig.close()
-    main_clip.close()
-    gif_resized.close()
-    main_resized.close()
-    video_only_clip.close()
-    for seg in audio_segments:
-        seg.close()
-    if final_audio:
-        final_audio.close()
-    if full_audio:
-        full_audio.close()
-    final_clip_with_audio.close()
+    print("Video writing complete.")
 
 
-def process_puzzle(csv_path: str, index: int) -> Tuple[str, List[str], str]:
-    """Extract FEN, move list, and ID for a puzzle at the given index.
+def process_puzzle(csv_path: str, index: int) -> Tuple[str, List[str], str, str]:
+    """Extract FEN, move list, ID, and themes for a puzzle at the given index.
 
     Args:
         csv_path: Path to the CSV file containing puzzles.
         index: Zero-based index of the puzzle to process.
 
     Returns:
-        A tuple of (FEN string, list of UCI moves, PuzzleId).
+        A tuple of (FEN string, list of UCI moves, PuzzleId, Themes string).
     """
     df = read_puzzles(csv_path)
     puzzle: pd.Series = df.iloc[index]
@@ -266,7 +376,8 @@ def process_puzzle(csv_path: str, index: int) -> Tuple[str, List[str], str]:
     moves_str: str = puzzle["Moves"]
     uci_moves: List[str] = moves_str.split(" ")
     puzzle_id: str = puzzle["PuzzleId"]
-    return fen, uci_moves, puzzle_id
+    themes: str = puzzle["Themes"]
+    return fen, uci_moves, puzzle_id, themes
 
 
 def generate_timestamped_output_path(base_dir: Path, prefix: str, suffix: str) -> Path:
@@ -285,46 +396,82 @@ def generate_timestamped_output_path(base_dir: Path, prefix: str, suffix: str) -
     return output_path
 
 
+def generate_puzzle_caption(
+    client: genai.Client, fen: str, uci_moves: List[str], themes: str
+) -> str:
+    """Generates a text caption/script for a chess puzzle video using the Gemini API.
+
+    Args:
+        client: The initialized Gemini Client.
+        fen: The starting FEN string of the puzzle.
+        uci_moves: The list of moves in UCI format.
+        themes: A string describing the puzzle themes.
+
+    Returns:
+        The generated text script, designed for ~50 seconds, with [REACTION] placeholders.
+    """
+    moves_str = " ".join(uci_moves)
+    prompt = f"""Generate an engaging script for a ~50-second social media video about a chess puzzle.
+The script should commentate on the puzzle moves. Interleave the commentary with placeholders marked exactly as '[REACTION]' where a reaction sound effect or GIF could be inserted to add humor or emphasis. Aim for roughly 150-200 words total.
+
+Puzzle details:
+Starting Position (FEN): {fen}
+Moves: {moves_str}
+Themes: {themes}
+
+Example structure:
+"White starts with a surprising move... [REACTION] Black seems to fall for the trap! [REACTION] And now, the checkmate!"
+
+Generate the script now:"""
+
+    print("Generating caption with Gemini...")
+    response = client.models.generate_content(
+        model="gemini-2.0-flash-lite", contents=prompt
+    )
+    print("Caption generation complete.")
+
+    cleaned_text = re.sub(r"```(python|text)?\n?|\n?```", "", response.text).strip()
+    return cleaned_text
+
+
 def generate_single_video(
     puzzle_index_to_process: int,
     csv_path: str,
     base_temp_dir_name: str,
     output_dir_path: Path,
     gif_dir_path: Path,
-    audio_dir_path: Path,
+    reaction_audio_dir_path: Path,
     video_fps: int,
+    gemini_api_key: str,
 ) -> Optional[Path]:
-    """Generate one puzzle video end-to-end.
-
-    Args:
-        puzzle_index_to_process: Index of the puzzle to render.
-        csv_path: Path to the puzzle CSV file.
-        base_temp_dir_name: Base name for the temporary PNG/video folder.
-        output_dir_path: Directory for final videos.
-        gif_dir_path: Directory of reaction GIFs.
-        audio_dir_path: Directory of reaction audio clips.
-        video_fps: Frames per second for the puzzle video.
-
-    Returns:
-        Path to the final MP4 if successful, otherwise None.
-    """
+    """Generate one puzzle video end-to-end, including interleaved audio."""
     print(f"Starting processing for puzzle index: {puzzle_index_to_process}")
+    gemini_client = genai.Client(api_key=gemini_api_key)
+    tts_client = texttospeech.TextToSpeechClient()
 
     temp_dir_path = Path(f"{base_temp_dir_name}_{puzzle_index_to_process}")
     prepare_directory(temp_dir_path)
     base_video_path = None
 
-    fen, uci_moves, puzzle_id = process_puzzle(csv_path, puzzle_index_to_process)
+    fen, uci_moves, puzzle_id, themes = process_puzzle(
+        csv_path, puzzle_index_to_process
+    )
+    caption = generate_puzzle_caption(gemini_client, fen, uci_moves, themes)
+    print(
+        f"Puzzle {puzzle_index_to_process} (ID: {puzzle_id}) Caption: {caption[:100]}..."
+    )
+    audio_file_paths = generate_interleaved_audio(
+        caption, tts_client, reaction_audio_dir_path, temp_dir_path
+    )
 
     base_video_path = create_base_video(fen, uci_moves, temp_dir_path, video_fps)
-
     random_gif_path = get_random_gif_path(gif_dir_path)
-    final_output_video_path: Path = output_dir_path / f"{puzzle_index_to_process}.mp4"
-
-    overlay_gif_on_video(
-        base_video_path, random_gif_path, audio_dir_path, final_output_video_path
+    final_output_video_path: Path = (
+        output_dir_path / f"puzzle_{puzzle_index_to_process}.mp4"
     )
-    shutil.rmtree(temp_dir_path, ignore_errors=True)
+    overlay_gif_on_video(
+        base_video_path, random_gif_path, audio_file_paths, final_output_video_path
+    )
 
     print(
         f"Finished processing puzzle index: {puzzle_index_to_process}, saved to {final_output_video_path}"
@@ -340,18 +487,20 @@ def main() -> None:
         output_dir_name,
         video_fps,
         reaction_gif_dir_name,
+        gemini_api_key,
         reaction_audio_dir_name,
     ) = load_env_vars()
 
     output_dir_path = Path(output_dir_name)
     gif_dir_path = Path(reaction_gif_dir_name)
-    audio_dir_path = Path(reaction_audio_dir_name)
+    reaction_audio_dir_path = Path(reaction_audio_dir_name)
 
     output_dir_path.mkdir(parents=True, exist_ok=True)
-    audio_dir_path.mkdir(parents=True, exist_ok=True)
 
-    num_videos_to_generate = 100
+    num_videos_to_generate = 10
+    puzzle_indices = range(num_videos_to_generate)
     print(f"Starting parallel generation of {num_videos_to_generate} videos...")
+    base_temp_dir = Path(temp_png_dir_name)
 
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = [
@@ -359,30 +508,27 @@ def main() -> None:
                 generate_single_video,
                 idx,
                 csv_path,
-                temp_png_dir_name,
+                str(base_temp_dir),  # Pass the base name as string
                 output_dir_path,
                 gif_dir_path,
-                audio_dir_path,
+                reaction_audio_dir_path,
                 video_fps,
+                gemini_api_key,
             )
-            for idx in range(num_videos_to_generate)
+            for idx in puzzle_indices
         ]
-        results: List[Path] = []
+        results: List[Optional[Path]] = []  # Allow for None results on failure
         for task in tqdm(
             concurrent.futures.as_completed(futures),
             total=len(futures),
             desc="Generating videos",
         ):
-            try:
-                outcome = task.result()
-            except Exception as exc:
-                print(f"Error generating video: {exc}")
-            else:
-                if outcome:
-                    results.append(outcome)
+            outcome = task.result()
+            results.append(outcome)
 
+    successful_videos = [res for res in results if res is not None]
     print(
-        f"\nFinished parallel generation. {len(results)} videos successfully generated."
+        f"\nFinished parallel generation. {len(successful_videos)} videos successfully generated."
     )
 
 
