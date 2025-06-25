@@ -3,6 +3,7 @@ puzzle_*.mp4
 temp_pngs*
 outputs
 .env
+gemini.out
 # pixi environments
 .pixi
 *.egg-info

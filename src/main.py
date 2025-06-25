@@ -6,10 +6,11 @@ from tqdm import tqdm
 from .config import Config
 from .puzzle import get_puzzle
 from .chess_renderer import render_board_sequence
+from .gemini_analyzer import GeminiAnalyzer
 from .video_editor import (
-    create_base_video,
+    create_dynamic_video,
     create_composite_video,
-    get_random_file,
+    select_optimal_gif_from_analysis,
     generate_timestamped_path,
 )
 from .utils import prepare_directory, ensure_directory
@@ -22,28 +23,23 @@ def generate_single_video(
     gif_dir: Path,
     audio_dir: Path,
 ) -> Optional[Path]:
-    """Generate single puzzle video.
-
-    Args:
-        puzzle_index: int - Index of puzzle to process
-        config: Config - Configuration settings
-        output_dir: Path - Output directory for videos
-        gif_dir: Path - Directory containing reaction GIFs
-        audio_dir: Path - Directory containing audio files
-
-    Returns:
-        Optional[Path]: Path to generated video or None if failed
-    """
+    """Generate single puzzle video with AI-optimized timing."""
     temp_dir = Path(f"{config.temp_png_dir}_{puzzle_index}")
     prepare_directory(temp_dir)
 
     puzzle = get_puzzle(config.csv_file_path, puzzle_index)
     png_files = render_board_sequence(puzzle.fen, puzzle.moves, temp_dir)
 
-    base_video_path = generate_timestamped_path(temp_dir, "base", ".mp4")
-    create_base_video(png_files, base_video_path, config.video_fps)
+    analyzer = GeminiAnalyzer()
+    available_gifs = list(gif_dir.glob("*.gif"))
+    available_audio = list(audio_dir.glob("*.mp3"))
 
-    gif_path = get_random_file(gif_dir, "*.gif")
+    analysis = analyzer.analyze_puzzle(puzzle, available_gifs, available_audio)
+
+    base_video_path = generate_timestamped_path(temp_dir, "base", ".mp4")
+    create_dynamic_video(png_files, analysis, base_video_path)
+
+    gif_path = select_optimal_gif_from_analysis(gif_dir, analysis)
     output_path = output_dir / f"{puzzle_index}.mp4"
 
     create_composite_video(
@@ -53,6 +49,7 @@ def generate_single_video(
         output_path,
         config.target_width,
         config.target_height,
+        analysis,
     )
 
     prepare_directory(temp_dir)
@@ -60,14 +57,7 @@ def generate_single_video(
 
 
 def generate_videos_parallel(config: Config) -> List[Path]:
-    """Generate multiple videos in parallel.
-
-    Args:
-        config: Config - Configuration settings
-
-    Returns:
-        List[Path]: List of generated video paths
-    """
+    """Generate multiple videos in parallel."""
     output_dir = ensure_directory(Path(config.output_dir))
     gif_dir = Path(config.reaction_gif_dir)
     audio_dir = ensure_directory(Path(config.reaction_audio_dir))
