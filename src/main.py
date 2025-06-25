@@ -72,15 +72,8 @@ def generate_videos_parallel(config: Config) -> List[Path]:
     gif_dir = Path(config.reaction_gif_dir)
     audio_dir = ensure_directory(Path(config.reaction_audio_dir))
 
-    with concurrent.futures.ProcessPoolExecutor(
-        max_workers=config.max_workers
-    ) as executor:
-        futures = [
-            executor.submit(
-                generate_single_video, idx, config, output_dir, gif_dir, audio_dir
-            )
-            for idx in range(config.num_videos)
-        ]
+    with concurrent.futures.ProcessPoolExecutor(max_workers=config.max_workers) as executor:
+        futures = [executor.submit(generate_single_video, idx, config, output_dir, gif_dir, audio_dir) for idx in range(config.num_videos)]
 
         results = []
         for task in tqdm(

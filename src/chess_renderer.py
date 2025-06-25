@@ -5,9 +5,7 @@ import chess.svg
 import cairosvg
 
 
-def generate_board_states(
-    fen: str, moves: List[str]
-) -> Iterator[Tuple[chess.Board, Optional[chess.Move]]]:
+def generate_board_states(fen: str, moves: List[str]) -> Iterator[Tuple[chess.Board, Optional[chess.Move]]]:
     """Generate chess board states for given FEN and moves.
 
     Args:

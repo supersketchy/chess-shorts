@@ -12,9 +12,7 @@ from moviepy import (
 from moviepy.video.fx.Loop import Loop
 
 
-def create_base_video(
-    png_files: List[str], output_path: Path, fps: int
-) -> VideoFileClip:
+def create_base_video(png_files: List[str], output_path: Path, fps: int) -> VideoFileClip:
     """Create base video from PNG sequence.
 
     Args:
@@ -87,16 +85,10 @@ def create_composite_video(
     duration = float(main_resized.duration or 1.0)
     gif_looped = Loop(duration=duration).apply(gif_resized)
 
-    gif_positioned = gif_looped.with_position(
-        ((target_width - w_gif) / 2, (h_gif_area - h_gif) / 2)
-    )
-    main_positioned = main_resized.with_position(
-        ((target_width - w_main) / 2, h_gif_area)
-    )
+    gif_positioned = gif_looped.with_position(((target_width - w_gif) / 2, (h_gif_area - h_gif) / 2))
+    main_positioned = main_resized.with_position(((target_width - w_main) / 2, h_gif_area))
 
-    video_composite = CompositeVideoClip(
-        [main_positioned, gif_positioned], size=(target_width, target_height)
-    )
+    video_composite = CompositeVideoClip([main_positioned, gif_positioned], size=(target_width, target_height))
 
     audio_files = list(audio_dir.glob("*.mp3"))
     audio_segments = []
@@ -107,14 +99,10 @@ def create_composite_video(
         audio_segments.append(audio_clip)
         total_duration += audio_clip.duration
 
-    final_audio = concatenate_audioclips(audio_segments).subclipped(
-        0, video_composite.duration
-    )
+    final_audio = concatenate_audioclips(audio_segments).subclipped(0, video_composite.duration)
     final_video = video_composite.with_audio(final_audio)
 
-    final_video.write_videofile(
-        str(output_path), codec="libx264", audio_codec="aac", logger=None
-    )
+    final_video.write_videofile(str(output_path), codec="libx264", audio_codec="aac", logger=None)
 
     for clip in [
         main_clip,
