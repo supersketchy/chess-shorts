@@ -10,9 +10,8 @@ class Config:
     """Configuration settings loaded from environment variables."""
 
     csv_file_path: str
-    gemini_api_key: str
-    temp_png_dir: str = "temp_pngs"
-    output_dir: str = "outputs"
+    temp_png_dir: str = "temp_media/temp_pngs"
+    output_dir: str = "temp_media/outputs"
     video_fps: int = 1
     reaction_gif_dir: str = "reaction_gifs"
     reaction_audio_dir: str = "reaction_audios"
@@ -32,15 +31,10 @@ class Config:
         if not csv_path:
             raise ValueError("CSV_FILE_PATH environment variable is required")
 
-        gemini_key = os.getenv("GEMINI_API_KEY")
-        if not gemini_key:
-            raise ValueError("GEMINI_API_KEY environment variable is required")
-
         return cls(
             csv_file_path=csv_path,
-            gemini_api_key=gemini_key,
-            temp_png_dir=os.getenv("TEMP_PNG_DIR_NAME", "temp_pngs"),
-            output_dir=os.getenv("OUTPUT_DIR_NAME", "outputs"),
+            temp_png_dir=os.getenv("TEMP_PNG_DIR_NAME", "temp_media/temp_pngs"),
+            output_dir=os.getenv("OUTPUT_DIR_NAME", "temp_media/outputs"),
             video_fps=int(os.getenv("VIDEO_FPS", "1")),
             reaction_gif_dir=os.getenv("REACTION_GIF_DIR", "reaction_gifs"),
             reaction_audio_dir=os.getenv("REACTION_AUDIO_DIR", "reaction_audios"),
