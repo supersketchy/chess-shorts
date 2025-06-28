@@ -6,11 +6,14 @@ from tqdm import tqdm
 from .config import Config
 from .puzzle import get_puzzle
 from .chess_renderer import render_board_sequence
-from .video_editor import (
+from .enhanced_video_editor import (
+    EnhancedVideoEditor,
     create_base_video,
+    generate_timestamped_path,
+)
+from .video_editor import (
     create_composite_video,
     select_optimal_gif,
-    generate_timestamped_path,
 )
 from .utils import prepare_directory, ensure_directory
 
@@ -22,27 +25,33 @@ def generate_single_video(
     gif_dir: Path,
     audio_dir: Path,
 ) -> Optional[Path]:
-    """Generate single puzzle video with rule-based reactions."""
+    """Generate single puzzle video with enhanced reactions and visuals."""
     temp_dir = Path(f"{config.temp_png_dir}_{puzzle_index}")
     prepare_directory(temp_dir)
 
     puzzle = get_puzzle(config.csv_file_path, puzzle_index)
     png_files = render_board_sequence(puzzle.fen, puzzle.moves, temp_dir)
-
-    base_video_path = generate_timestamped_path(temp_dir, "base", ".mp4")
-    create_base_video(png_files, base_video_path, config.video_fps)
-
-    gif_path = select_optimal_gif(gif_dir, "excitement")
     output_path = output_dir / f"{puzzle_index}.mp4"
 
-    create_composite_video(
-        base_video_path,
-        gif_path,
-        audio_dir,
-        output_path,
-        config.target_width,
-        config.target_height,
-    )
+    if config.enable_multi_reactions and config.enable_visual_enhancements:
+        # Use enhanced video editor with multi-reactions
+        editor = EnhancedVideoEditor(gif_dir, audio_dir)
+        editor.create_multi_reaction_video(puzzle, png_files, output_path, config.target_width, config.target_height, config.video_template)
+    else:
+        # Fallback to legacy single-reaction system
+        base_video_path = generate_timestamped_path(temp_dir, "base", ".mp4")
+        create_base_video(png_files, base_video_path, config.video_fps)
+
+        gif_path = select_optimal_gif(gif_dir, "excitement")
+
+        create_composite_video(
+            base_video_path,
+            gif_path,
+            audio_dir,
+            output_path,
+            config.target_width,
+            config.target_height,
+        )
 
     prepare_directory(temp_dir)
     return output_path

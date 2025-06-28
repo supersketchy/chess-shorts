@@ -19,6 +19,9 @@ class Config:
     target_width: int = 1080
     target_height: int = 1920
     max_workers: int = (os.cpu_count() or 8) // 2
+    video_template: str = "engaging"
+    enable_multi_reactions: bool = True
+    enable_visual_enhancements: bool = True
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -40,4 +43,7 @@ class Config:
             reaction_audio_dir=os.getenv("REACTION_AUDIO_DIR", "reaction_audios"),
             num_videos=int(os.getenv("NUM_VIDEOS", "100")),
             max_workers=int(os.getenv("MAX_WORKERS", str((os.cpu_count() or 8) // 2))),
+            video_template=os.getenv("VIDEO_TEMPLATE", "engaging"),
+            enable_multi_reactions=os.getenv("ENABLE_MULTI_REACTIONS", "true").lower() == "true",
+            enable_visual_enhancements=os.getenv("ENABLE_VISUAL_ENHANCEMENTS", "true").lower() == "true",
         )
