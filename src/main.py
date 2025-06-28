@@ -6,11 +6,10 @@ from tqdm import tqdm
 from .config import Config
 from .puzzle import get_puzzle
 from .chess_renderer import render_board_sequence
-from .gemini_analyzer import GeminiAnalyzer
 from .video_editor import (
-    create_dynamic_video,
+    create_base_video,
     create_composite_video,
-    select_optimal_gif_from_analysis,
+    select_optimal_gif,
     generate_timestamped_path,
 )
 from .utils import prepare_directory, ensure_directory
@@ -23,23 +22,17 @@ def generate_single_video(
     gif_dir: Path,
     audio_dir: Path,
 ) -> Optional[Path]:
-    """Generate single puzzle video with AI-optimized timing."""
+    """Generate single puzzle video with rule-based reactions."""
     temp_dir = Path(f"{config.temp_png_dir}_{puzzle_index}")
     prepare_directory(temp_dir)
 
     puzzle = get_puzzle(config.csv_file_path, puzzle_index)
     png_files = render_board_sequence(puzzle.fen, puzzle.moves, temp_dir)
 
-    analyzer = GeminiAnalyzer()
-    available_gifs = list(gif_dir.glob("*.gif"))
-    available_audio = list(audio_dir.glob("*.mp3"))
-
-    analysis = analyzer.analyze_puzzle(puzzle, available_gifs, available_audio)
-
     base_video_path = generate_timestamped_path(temp_dir, "base", ".mp4")
-    create_dynamic_video(png_files, analysis, base_video_path)
+    create_base_video(png_files, base_video_path, config.video_fps)
 
-    gif_path = select_optimal_gif_from_analysis(gif_dir, analysis)
+    gif_path = select_optimal_gif(gif_dir, "excitement")
     output_path = output_dir / f"{puzzle_index}.mp4"
 
     create_composite_video(
@@ -49,7 +42,6 @@ def generate_single_video(
         output_path,
         config.target_width,
         config.target_height,
-        analysis,
     )
 
     prepare_directory(temp_dir)

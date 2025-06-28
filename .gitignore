@@ -1,7 +1,8 @@
 *TEMP_*.mp4
 puzzle_*.mp4
 temp_pngs*
-outputs
+outputs*
+temp_media/
 .env
 gemini.out
 # pixi environments
