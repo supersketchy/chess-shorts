@@ -14,9 +14,6 @@ from moviepy import (
 )
 from moviepy.video.fx.Loop import Loop
 from moviepy.video.fx.FadeIn import FadeIn
-from moviepy.audio.fx.AudioFadeIn import AudioFadeIn
-from moviepy.audio.fx.AudioFadeOut import AudioFadeOut
-from moviepy.audio.fx.AudioNormalize import AudioNormalize
 from .puzzle import Puzzle
 from .enhanced_reaction_selector import EnhancedReactionSelector, ReactionTiming
 
@@ -62,10 +59,10 @@ class VideoTemplate:
 
         return (
             TextClip(
-                hook_text,
-                fontsize=48,
+                "Arial-Bold",
+                text=hook_text,
+                font_size=48,
                 color="white",
-                font="Arial-Bold",
                 stroke_color="black",
                 stroke_width=2,
             )
@@ -89,18 +86,7 @@ class EnhancedVideoEditor:
         audio_segments = []
         total_duration = 0
 
-        # Create engagement hook
-        if template_style == "engaging":
-            hook_clip = VideoTemplate.create_engagement_hook(puzzle)
-            hook_bg = ColorClip(size=(target_width, target_height), color=(0, 0, 0)).with_duration(2.0)
-            hook_composite = CompositeVideoClip([hook_bg, hook_clip])
-            move_clips.append(hook_composite)
-
-            # Add hook audio (suspense)
-            hook_audio = self.selector._select_audio_by_energy("suspense", "medium")
-            hook_audio_clip = AudioFileClip(str(hook_audio)).subclipped(0, 2.0)
-            audio_segments.append(hook_audio_clip)
-            total_duration += 2.0
+        # Simplified approach without text overlays for testing
 
         # Process each move with individual reactions
         for move_index, png_file in enumerate(png_files):
@@ -115,21 +101,13 @@ class EnhancedVideoEditor:
             audio_segments.append(audio_clip)
             total_duration += timing.duration
 
-        # Add final celebration for completed puzzle
-        if template_style == "engaging":
-            celebration_clip = self._create_celebration_overlay(puzzle, target_width, target_height)
-            move_clips.append(celebration_clip)
-
-            celebration_audio = self.selector._select_audio_by_energy("celebration", "high")
-            celebration_audio_clip = AudioFileClip(str(celebration_audio)).subclipped(0, 2.0)
-            audio_segments.append(celebration_audio_clip)
+        # Simplified - no celebration overlay for testing
 
         # Combine all clips
         final_video = concatenate_videoclips(move_clips)
         final_audio = concatenate_audioclips(audio_segments)
 
-        # Apply final audio normalization
-        final_audio = AudioNormalize(final_audio)
+        # Skip final audio normalization for testing
         final_video_with_audio = final_video.with_audio(final_audio)
 
         # Write final video
@@ -172,14 +150,8 @@ class EnhancedVideoEditor:
         board_positioned = board_resized.with_position(("center", 50))
         gif_positioned = gif_looped.with_position(("center", board_h + 75))
 
-        # Create move indicator text
-        move_text = self._create_move_indicator(puzzle, move_index, timing.duration)
-
-        # Create difficulty badge
-        difficulty_badge = self._create_difficulty_badge(puzzle, timing.duration)
-
-        # Compose final clip
-        composite = CompositeVideoClip([gradient_bg, board_positioned, gif_positioned, move_text, difficulty_badge], size=(target_width, target_height))
+        # Simplified composition without text overlays
+        composite = CompositeVideoClip([gradient_bg, board_positioned, gif_positioned], size=(target_width, target_height))
 
         return composite
 
@@ -203,10 +175,10 @@ class EnhancedVideoEditor:
 
         return (
             TextClip(
-                text,
-                fontsize=36,
+                "Arial-Bold",
+                text=text,
+                font_size=36,
                 color="white",
-                font="Arial-Bold",
                 stroke_color="black",
                 stroke_width=1,
             )
@@ -224,10 +196,10 @@ class EnhancedVideoEditor:
 
         return (
             TextClip(
-                difficulty_text,
-                fontsize=24,
+                "Arial-Bold",
+                text=difficulty_text,
+                font_size=24,
                 color=text_color_map.get(color, "white"),
-                font="Arial-Bold",
                 stroke_color="black",
                 stroke_width=1,
             )
@@ -244,10 +216,10 @@ class EnhancedVideoEditor:
         text = random.choice(celebration_texts)
         text_clip = (
             TextClip(
-                text,
-                fontsize=56,
+                "Arial-Bold",
+                text=text,
+                font_size=56,
                 color="gold",
-                font="Arial-Bold",
                 stroke_color="darkgreen",
                 stroke_width=3,
             )
@@ -260,10 +232,10 @@ class EnhancedVideoEditor:
             themes_text = f"Theme: {puzzle.themes.replace(' ', ', ').title()}"
             themes_clip = (
                 TextClip(
-                    themes_text,
-                    fontsize=32,
+                    "Arial",
+                    text=themes_text,
+                    font_size=32,
                     color="lightgreen",
-                    font="Arial",
                 )
                 .with_duration(2.0)
                 .with_position(("center", height - 150))
@@ -285,15 +257,7 @@ class EnhancedVideoEditor:
             audio_clips = [audio_clip] * loops_needed
             audio_clip = concatenate_audioclips(audio_clips).subclipped(0, timing.duration)
 
-        # Add crossfading
-        if has_previous:
-            audio_clip = AudioFadeIn(0.3).apply(audio_clip)
-
-        if timing.priority < 8:  # Don't fade out important moments
-            audio_clip = AudioFadeOut(0.3).apply(audio_clip)
-
-        # Normalize audio
-        audio_clip = AudioNormalize(audio_clip)
+        # Simplified audio processing - skip normalization for now
 
         return audio_clip
 
