@@ -1,7 +1,10 @@
 from pathlib import Path
 import shutil
 import concurrent.futures
+import warnings
 from tqdm import tqdm
+
+warnings.filterwarnings("ignore", module="moviepy")
 
 from config import Config
 from puzzle import get_puzzle

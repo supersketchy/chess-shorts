@@ -17,7 +17,7 @@ def create_base_video(png_files: list[str], output_path: Path, fps: int) -> Vide
     """
     clip = ImageSequenceClip(png_files, fps=fps)
     clip.write_videofile(str(output_path), codec="libx264", logger=None)
-    result = VideoFileClip(str(output_path))
+    result = VideoFileClip(str(output_path), print_infos=False)
     clip.close()
     return result
 
@@ -70,8 +70,8 @@ def create_composite_video(base_path: Path, gif_path: Path, audio_dir: Path, out
         width (int): Target video width.
         height (int): Target video height.
     """
-    main_clip = VideoFileClip(str(base_path))
-    gif_clip = VideoFileClip(str(gif_path))
+    main_clip = VideoFileClip(str(base_path), print_infos=False)
+    gif_clip = VideoFileClip(str(gif_path), print_infos=False)
 
     main_resized = main_clip.resized(width=width)
     h_main = main_resized.size[1]
