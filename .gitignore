@@ -1,6 +1,6 @@
 *TEMP_*.mp4
 puzzle_*.mp4
-temp_pngs*
+temp*
 outputs*
 temp_media/
 .env
