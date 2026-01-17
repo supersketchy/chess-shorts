@@ -1,6 +1,6 @@
-[project]
+[workspace]
 channels = ["conda-forge"]
-description = "Add a short description here"
+description = "A python project to autogenerate chess shorts"
 name = "chess-shorts"
 platforms = ["linux-64"]
 version = "0.1.0"
