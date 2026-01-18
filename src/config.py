@@ -13,3 +13,5 @@ num_videos = int(os.getenv("NUM_VIDEOS", "100"))
 target_width = 1080
 target_height = 1920
 max_workers = int(os.getenv("MAX_WORKERS", "16"))
+gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+target_video_duration = float(os.getenv("TARGET_VIDEO_DURATION", "60"))
